@@ -11,3 +11,5 @@ obj/
 .env
 .env.*
 !.env.example
+# Local uploaded product photos
+backend/App_Data/

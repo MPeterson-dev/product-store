@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useCartStore } from './stores/cart.js'
+import OwnerProductBuilder from './components/OwnerProductBuilder.vue'
+import ProductCard from './components/ProductCard.vue'
 
 // ref = Reactive values: Vue updates the page when these change.
 const products = ref([])
@@ -10,7 +12,8 @@ const selectedCategory = ref('All')
 const searchQuery = ref('')
 const cart = useCartStore()
 const selections = ref({})
-
+const accountMenuOpen = ref(false)
+const currentView = ref('store')
 const checkingOut = ref(false)
 const checkoutError = ref('')
 const confirmation = ref(null)
@@ -88,15 +91,84 @@ onMounted(async () => {
   selections.value = Object.fromEntries(
     products.value.map((product) => [
       product.id,
-      { size: product.sizes[0], color: product.colors[0] },
+      { size: product.sizes[0] ?? '', color: product.colors[0] ?? '' },
     ]),
   )
 })
+
+function productCreated(product) {
+  selections.value[product.id] = { size: product.sizes[0] ?? '', color: product.colors[0] ?? '' }
+  products.value.push(product)
+  searchQuery.value = ''
+  selectedCategory.value = 'All'
+}
+
+function openOwnerDashboard() {
+  currentView.value = 'owner'
+  accountMenuOpen.value = false
+}
 </script>
 
 <template>
-  <main class="container py-5">
-    <h1>Store Title here</h1>
+  <header v-if="currentView === 'store'" class="border-bottom bg-white">
+    <nav class="container py-3" aria-label="Store navigation">
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          class="btn btn-light fs-4"
+          aria-label="Store home"
+          @click="currentView = 'store'"
+        >
+          🛍️
+        </button>
+
+        <span class="text-secondary small"> 📍 Location Placeholder </span>
+
+        <form class="flex-grow-1" role="search" @submit.prevent="currentView = 'store'">
+          <label for="header-search" class="visually-hidden"> Search products </label>
+          <input
+            id="header-search"
+            v-model="searchQuery"
+            type="search"
+            class="form-control"
+            placeholder="Search products..."
+          />
+        </form>
+
+        <button
+          type="button"
+          class="btn btn-outline-dark"
+          :aria-label="`Shopping cart, ${cart.itemCount} items`"
+          @click="currentView = 'store'"
+        >
+          🛒 <span>{{ cart.itemCount }}</span>
+        </button>
+
+        <div class="position-relative">
+          <button
+            type="button"
+            class="btn btn-outline-dark"
+            aria-label="Account options"
+            aria-controls="account-options"
+            :aria-expanded="accountMenuOpen"
+            @click="accountMenuOpen = !accountMenuOpen"
+          >
+            👤
+          </button>
+
+          <div
+            v-if="accountMenuOpen"
+            id="account-options"
+            class="position-absolute end-0 mt-2 p-2 bg-white border rounded shadow z-3"
+          >
+            <button @click="openOwnerDashboard">Owner Dashboard</button>
+          </div>
+        </div>
+      </div>
+    </nav>
+  </header>
+  <main v-if="currentView === 'store'" class="container py-5">
+    <h1>Product seller here</h1>
     <div class="row g-3 mb-4">
       <div class="col-12 col-md-8">
         <label for="search" class="form-label">Search products</label>
@@ -124,42 +196,43 @@ onMounted(async () => {
     <ul v-else class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-3 list-unstyled">
       <li v-if="filteredProducts.length === 0" class="col-12">No products match your search.</li>
       <li v-for="product in filteredProducts" :key="product.id" class="col">
-        <article class="card h-100 shadow-sm">
-          <div class="card-body">
-            <h2 class="h5 card-title">{{ product.name }}</h2>
-            <p class="text-muted">{{ product.category }}</p>
-            <p class="fw-bold">${{ product.price.toFixed(2) }}</p>
-            <label :for="`size-${product.id}`" class="form-label">Size</label>
-            <select
-              :id="`size-${product.id}`"
-              v-model="selections[product.id].size"
-              class="form-select mb-2"
-            >
-              <option v-for="size in product.sizes" :key="size" :value="size">
-                {{ size }}
-              </option>
-            </select>
+        <ProductCard :product="product">
+          <label v-if="product.sizes.length" :for="`size-${product.id}`" class="form-label"
+            >Size</label
+          >
+          <select
+            v-if="product.sizes.length"
+            :id="`size-${product.id}`"
+            v-model="selections[product.id].size"
+            class="form-select mb-2"
+          >
+            <option v-for="size in product.sizes" :key="size" :value="size">
+              {{ size }}
+            </option>
+          </select>
 
-            <label :for="`color-${product.id}`" class="form-label">Color</label>
-            <select
-              :id="`color-${product.id}`"
-              v-model="selections[product.id].color"
-              class="form-select mb-3"
-            >
-              <option v-for="color in product.colors" :key="color" :value="color">
-                {{ color }}
-              </option>
-            </select>
+          <label v-if="product.colors.length" :for="`color-${product.id}`" class="form-label"
+            >Color</label
+          >
+          <select
+            v-if="product.colors.length"
+            :id="`color-${product.id}`"
+            v-model="selections[product.id].color"
+            class="form-select mb-3"
+          >
+            <option v-for="color in product.colors" :key="color" :value="color">
+              {{ color }}
+            </option>
+          </select>
 
-            <button
-              type="button"
-              class="btn btn-dark"
-              @click="cart.addItem({ ...product, ...selections[product.id] })"
-            >
-              Add to Cart
-            </button>
-          </div>
-        </article>
+          <button
+            type="button"
+            class="btn btn-dark"
+            @click="cart.addItem({ ...product, ...selections[product.id] })"
+          >
+            Add to Cart
+          </button>
+        </ProductCard>
       </li>
     </ul>
     <section class="mt-5">
@@ -170,7 +243,9 @@ onMounted(async () => {
       <ul v-else class="list-group mb-3">
         <li v-for="item in cart.items" :key="item.variantKey" class="list-group-item">
           <h3 class="h6">{{ item.name }}</h3>
-          <p>{{ item.size }} · {{ item.color }}</p>
+          <p v-if="item.size || item.color">
+            {{ [item.size, item.color].filter(Boolean).join(' · ') }}
+          </p>
           <p>${{ item.price.toFixed(2) }} each · Quantity: {{ item.quantity }}</p>
 
           <button
@@ -222,5 +297,15 @@ onMounted(async () => {
         <div>No payment was taken.</div>
       </div>
     </section>
+  </main>
+  <main v-else-if="currentView === 'owner'" class="container py-5">
+    <button type="button" class="btn btn-outline-secondary mb-3" @click="currentView = 'store'">
+      ← Back to store
+    </button>
+    <h1>Owner Dashboard</h1>
+    <p class="text-secondary">Create and manage your products.</p>
+
+    <p class="small text-secondary">Local demo: products reset when the API restarts.</p>
+    <OwnerProductBuilder @created="productCreated" />
   </main>
 </template>
