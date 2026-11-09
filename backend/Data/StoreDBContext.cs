@@ -1,15 +1,21 @@
 using ClothingStore.Api.Models;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace ClothingStore.Api.Data;
 
 public class StoreDbContext(DbContextOptions<StoreDbContext> options)
-    : DbContext(options)
+    : IdentityDbContext<IdentityUser>(options)
 {
     public DbSet<ProductEntity> Products => Set<ProductEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Configure Identity's user, role, and account tables.
+        base.OnModelCreating(modelBuilder);
+
+        // Preserve our existing product configuration.
         var product = modelBuilder.Entity<ProductEntity>();
 
         product.Property(p => p.Name).HasMaxLength(120);

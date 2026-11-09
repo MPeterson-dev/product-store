@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import ProductCard from './ProductCard.vue'
+import { apiFetch } from '../services/api.js'
 
 const emit = defineEmits(['created'])
 const draft = reactive({ name: '', description: '', category: '', price: '', details: [] })
@@ -93,7 +94,7 @@ async function createProduct() {
   saving.value = true
   try {
     if (photo.value && !uploadedImageUrl) {
-      const upload = await fetch('/api/product-images', {
+      const upload = await apiFetch('/api/product-images', {
         method: 'POST',
         headers: { 'Content-Type': photo.value.type },
         body: photo.value,
@@ -105,7 +106,7 @@ async function createProduct() {
       }
       uploadedImageUrl = image.imageUrl
     }
-    const response = await fetch('/api/products', {
+    const response = await apiFetch('/api/products', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -227,9 +228,7 @@ async function createProduct() {
             Descriptive fields <span class="text-secondary fw-normal">(optional)</span>
           </h3>
           <p class="small text-secondary">
-            Describe anything: material, capacity, dimensions, or ink color. These display as
-            details, imageUrl: uploadedImageUrl || null, imageAlt: photoAlt.value.trim(), not
-            choices for shoppers.
+            Describe anything: material, capacity, dimensions, etc. Not choices for shoppers.
           </p>
           <div
             v-for="(detail, index) in draft.details"

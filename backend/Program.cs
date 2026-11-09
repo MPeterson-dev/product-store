@@ -1,6 +1,9 @@
 using ClothingStore.Api.Data;
 using ClothingStore.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Antiforgery;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,7 +24,71 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 6 * 1024 * 1024
 );
 
+// Store accounts and roles in our existing SQL Server database.
+builder.Services
+    .AddIdentityApiEndpoints<IdentityUser>(options =>
+    {
+        options.User.RequireUniqueEmail = true;
+        options.Password.RequiredLength = 12;
+
+        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+    })
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<StoreDbContext>();
+
+// Define an authorization policy for owner-only operations.
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("OwnerOnly", policy =>
+        policy.RequireAuthenticatedUser().RequireRole("Owner"));
+});
+
+// Protect browser requests that change data.
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-CSRF-TOKEN";
+});
+
 var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseAntiforgery();
+
+// Require a CSRF token for requests that change API data.
+app.Use(async (context, next) =>
+{
+    var changesData =
+        HttpMethods.IsPost(context.Request.Method) ||
+        HttpMethods.IsPut(context.Request.Method) ||
+        HttpMethods.IsPatch(context.Request.Method) ||
+        HttpMethods.IsDelete(context.Request.Method);
+
+    if (changesData && context.Request.Path.StartsWithSegments("/api"))
+    {
+        try
+        {
+            var antiforgery = context.RequestServices
+                .GetRequiredService<IAntiforgery>();
+
+            await antiforgery.ValidateRequestAsync(context);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+
+            await context.Response.WriteAsJsonAsync(new
+            {
+                message = "Your session token expired. Refresh the page and try again."
+            });
+
+            return;
+        }
+    }
+
+    await next(context);
+});
 
 // Photos stay on disk; their URLs are saved in SQL Server.
 var imageDirectory = Path.Combine(
@@ -36,6 +103,41 @@ if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
+
+// Give Vue a token to send with requests that change data.
+app.MapGet("/api/auth/csrf", (
+    HttpContext context,
+    IAntiforgery antiforgery) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var tokens = antiforgery.GetAndStoreTokens(context);
+
+    return Results.Ok(new { token = tokens.RequestToken });
+});
+
+// Identity provides registration, login, and account-management endpoints.
+app.MapGroup("/api/auth")
+    .MapIdentityApi<IdentityUser>();
+
+// Let Vue check who is signed in.
+app.MapGet("/api/auth/me", (ClaimsPrincipal user) =>
+{
+    return Results.Ok(new
+    {
+        isAuthenticated = user.Identity?.IsAuthenticated == true,
+        email = user.Identity?.Name,
+        isOwner = user.IsInRole("Owner")
+    });
+});
+
+// End the current cookie-based login session.
+app.MapPost("/api/auth/logout", async (
+    SignInManager<IdentityUser> signInManager) =>
+{
+    await signInManager.SignOutAsync();
+    return Results.Ok();
+})
+.RequireAuthorization();
 
 // Return all products, including their descriptive fields.
 app.MapGet("/api/products", async (StoreDbContext db) =>

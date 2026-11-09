@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useCartStore } from './stores/cart.js'
 import OwnerProductBuilder from './components/OwnerProductBuilder.vue'
 import ProductCard from './components/ProductCard.vue'
+import { apiFetch } from './services/api.js'
 
 // ref = Reactive values: Vue updates the page when these change.
 const products = ref([])
@@ -26,7 +27,7 @@ async function checkout() {
   confirmation.value = null
 
   try {
-    const response = await fetch('/api/checkout', {
+    const response = await apiFetch('/api/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
