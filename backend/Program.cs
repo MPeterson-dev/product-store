@@ -231,7 +231,7 @@ app.MapPost("/api/product-images", async (HttpRequest request) =>
     {
         imageUrl = $"/api/product-images/{fileName}"
     });
-});
+}).RequireAuthorization("OwnerOnly");
 
 // Serve an uploaded photo.
 app.MapGet("/api/product-images/{fileName}",
@@ -370,7 +370,7 @@ app.MapPost("/api/products",
 
     return Results.Created($"/api/products/{product.Id}", product);
 })
-.WithName("CreateProduct");
+.WithName("CreateProduct").RequireAuthorization("OwnerOnly");
 
 // Validate a demo cart and calculate its total using database prices.
 app.MapPost("/api/checkout",
@@ -433,6 +433,8 @@ app.MapPost("/api/checkout",
         total
     });
 });
+
+await OwnerAccountSetup.InitializeAsync(app);
 
 app.Run();
 

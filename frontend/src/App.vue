@@ -4,6 +4,7 @@ import { useCartStore } from './stores/cart.js'
 import OwnerProductBuilder from './components/OwnerProductBuilder.vue'
 import ProductCard from './components/ProductCard.vue'
 import { apiFetch } from './services/api.js'
+import LoginForm from './components/LoginForm.vue'
 
 // ref = Reactive values: Vue updates the page when these change.
 const products = ref([])
@@ -72,6 +73,85 @@ const filteredProducts = computed(() =>
   }),
 )
 
+const session = ref({
+  isAuthenticated: false,
+  email: null,
+  isOwner: false,
+})
+
+const checkingSession = ref(true)
+const signingOut = ref(false)
+const accountError = ref('')
+
+async function refreshSession() {
+  const response = await apiFetch('/api/auth/me', {
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error('Unable to check your login status.')
+  }
+
+  session.value = await response.json()
+}
+
+onMounted(async () => {
+  try {
+    await refreshSession()
+  } catch {
+    accountError.value = 'Could not check your login status. Refresh to try again.'
+  } finally {
+    checkingSession.value = false
+  }
+})
+
+function openLogin() {
+  accountError.value = ''
+  accountMenuOpen.value = false
+  currentView.value = 'login'
+}
+
+async function signedIn() {
+  try {
+    await refreshSession()
+    accountError.value = ''
+    currentView.value = 'store'
+  } catch {
+    accountError.value =
+      'Sign-in completed, but your account details could not be loaded. Refresh the page.'
+  }
+}
+
+async function logout() {
+  if (signingOut.value) return
+
+  signingOut.value = true
+  accountError.value = ''
+
+  try {
+    const response = await apiFetch('/api/auth/logout', {
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error('Sign-out failed.')
+    }
+
+    session.value = {
+      isAuthenticated: false,
+      email: null,
+      isOwner: false,
+    }
+
+    accountMenuOpen.value = false
+    currentView.value = 'store'
+  } catch {
+    accountError.value = 'Could not sign out. Please try again.'
+  } finally {
+    signingOut.value = false
+  }
+}
+
 // Load products after the component appears on the page.
 onMounted(async () => {
   try {
@@ -105,6 +185,13 @@ function productCreated(product) {
 }
 
 function openOwnerDashboard() {
+  if (!session.value.isAuthenticated) {
+    openLogin()
+    return
+  }
+
+  if (!session.value.isOwner) return
+
   currentView.value = 'owner'
   accountMenuOpen.value = false
 }
@@ -162,12 +249,46 @@ function openOwnerDashboard() {
             id="account-options"
             class="position-absolute end-0 mt-2 p-2 bg-white border rounded shadow z-3"
           >
-            <button @click="openOwnerDashboard">Owner Dashboard</button>
+            <p v-if="checkingSession" class="small mb-0 text-nowrap">Checking account…</p>
+
+            <button
+              v-else-if="!session.isAuthenticated"
+              type="button"
+              class="btn btn-light text-nowrap"
+              @click="openLogin"
+            >
+              Sign in
+            </button>
+
+            <template v-else>
+              <p class="small mb-2">{{ session.email }}</p>
+
+              <button
+                v-if="session.isOwner"
+                type="button"
+                class="btn btn-light text-nowrap d-block mb-2"
+                @click="openOwnerDashboard"
+              >
+                Owner Dashboard
+              </button>
+
+              <button
+                type="button"
+                class="btn btn-outline-secondary text-nowrap"
+                :disabled="signingOut"
+                @click="logout"
+              >
+                {{ signingOut ? 'Signing out…' : 'Sign out' }}
+              </button>
+            </template>
           </div>
         </div>
       </div>
     </nav>
   </header>
+  <p v-if="accountError" class="container alert alert-danger mt-3" role="alert">
+    {{ accountError }}
+  </p>
   <main v-if="currentView === 'store'" class="container py-5">
     <h1>Product seller here</h1>
     <div class="row g-3 mb-4">
@@ -299,14 +420,19 @@ function openOwnerDashboard() {
       </div>
     </section>
   </main>
-  <main v-else-if="currentView === 'owner'" class="container py-5">
+  <main v-else-if="currentView === 'login'" class="container py-5">
+    <button type="button" class="btn btn-outline-secondary mb-3" @click="currentView = 'store'">
+      ← Back to store
+    </button>
+
+    <LoginForm @signed-in="signedIn" />
+  </main>
+  <main v-else-if="currentView === 'owner' && session.isOwner" class="container py-5">
     <button type="button" class="btn btn-outline-secondary mb-3" @click="currentView = 'store'">
       ← Back to store
     </button>
     <h1>Owner Dashboard</h1>
     <p class="text-secondary">Create and manage your products.</p>
-
-    <p class="small text-secondary">Local demo: products reset when the API restarts.</p>
     <OwnerProductBuilder @created="productCreated" />
   </main>
 </template>
