@@ -4,6 +4,11 @@ import { mount, flushPromises } from '@vue/test-utils'
 import App from '../App.vue'
 import Builder from '../components/OwnerProductBuilder.vue'
 
+// Test components independently of the separately implemented CSRF handshake.
+vi.mock('../services/api.js', () => ({
+  apiFetch: (...args) => fetch(...args),
+}))
+
 afterEach(() => {
   vi.unstubAllGlobals()
   localStorage.clear()
@@ -11,7 +16,16 @@ afterEach(() => {
 
 describe('owner dashboard', () => {
   it('hides the store header when opening the builder', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [] }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url) => ({
+        ok: true,
+        json: async () =>
+          url === '/api/auth/me'
+            ? { isAuthenticated: true, email: 'owner@example.test', isOwner: true }
+            : [],
+      })),
+    )
     const wrapper = mount(App, { global: { plugins: [createPinia()] } })
     await flushPromises()
     await wrapper.get('[aria-label="Account options"]').trigger('click')
@@ -94,6 +108,93 @@ describe('product photo', () => {
     await input.trigger('change')
     expect(wrapper.get('[role="alert"]').text()).toContain('JPEG, PNG, or WebP')
     expect(mock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
+describe('product editing', () => {
+  const product = {
+    id: 9,
+    name: 'Original cup',
+    description: 'Ceramic cup',
+    category: 'Drinkware',
+    price: 18,
+    sizes: [],
+    colors: [],
+    imageUrl: '/api/product-images/11111111111111111111111111111111.jpg',
+    imageAlt: 'Blue cup',
+    details: [{ name: 'Capacity', value: '15 oz' }],
+  }
+
+  it('sends PUT with the original photo when only text changes', async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ ...product, name: 'Updated cup' }) })
+    vi.stubGlobal('fetch', mock)
+    const wrapper = mount(Builder, { props: { product } })
+    expect(wrapper.get('#product-title').element.value).toBe('Original cup')
+    expect(wrapper.get('aside img').attributes('src')).toBe(product.imageUrl)
+    await wrapper.get('#product-title').setValue('Updated cup')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(mock.mock.calls[0][0]).toBe('/api/products/9')
+    expect(mock.mock.calls[0][1].method).toBe('PUT')
+    const payload = JSON.parse(mock.mock.calls[0][1].body)
+    expect(payload.imageUrl).toBe(product.imageUrl)
+    expect(payload.details).toEqual(product.details)
+    expect(product.name).toBe('Original cup')
+    expect(wrapper.emitted('updated')[0][0].name).toBe('Updated cup')
+    wrapper.unmount()
+  })
+
+  it('cancels without submitting or mutating the original product', async () => {
+    const mock = vi.fn()
+    vi.stubGlobal('fetch', mock)
+    const wrapper = mount(Builder, { props: { product } })
+    await wrapper.get('#product-title').setValue('Unsaved cup')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel')
+      .trigger('click')
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+    expect(mock).not.toHaveBeenCalled()
+    expect(product.name).toBe('Original cup')
+    wrapper.unmount()
+  })
+
+  it('can explicitly remove an existing image and retains the draft on save rejection', async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 400, json: async () => ({ message: 'Rejected' }) })
+    vi.stubGlobal('fetch', mock)
+    const wrapper = mount(Builder, { props: { product } })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Remove photo')
+      .trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(JSON.parse(mock.mock.calls[0][1].body).imageUrl).toBeNull()
+    expect(wrapper.get('[role="alert"]').text()).toBe('Rejected')
+    expect(wrapper.get('#product-title').element.value).toBe('Original cup')
+    expect(wrapper.emitted('updated')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('does not expose editing controls to a visitor', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url) => ({
+        ok: true,
+        json: async () =>
+          url === '/api/auth/me'
+            ? { isAuthenticated: false, isOwner: false, email: null }
+            : [product],
+      })),
+    )
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Edit product')).toBe(false)
     wrapper.unmount()
   })
 })

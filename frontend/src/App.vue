@@ -16,6 +16,8 @@ const cart = useCartStore()
 const selections = ref({})
 const accountMenuOpen = ref(false)
 const currentView = ref('store')
+const editingProduct = ref(null)
+const storeNotice = ref('')
 const checkingOut = ref(false)
 const checkoutError = ref('')
 const confirmation = ref(null)
@@ -184,6 +186,41 @@ function productCreated(product) {
   selectedCategory.value = 'All'
 }
 
+function editProduct(product) {
+  if (!session.value.isOwner) return
+  editingProduct.value = product
+  storeNotice.value = ''
+  currentView.value = 'owner'
+}
+
+function leaveOwnerDashboard() {
+  editingProduct.value = null
+  currentView.value = 'store'
+}
+
+function productUpdated(product) {
+  const index = products.value.findIndex((item) => item.id === product.id)
+  if (index !== -1) products.value[index] = product
+
+  // Keep cached cart information consistent with an owner price/name edit.
+  for (const item of cart.items.filter((item) => item.id === product.id)) {
+    Object.assign(item, {
+      name: product.name,
+      category: product.category,
+      price: product.price,
+      description: product.description,
+      details: product.details,
+      imageUrl: product.imageUrl,
+      imageAlt: product.imageAlt,
+    })
+  }
+  searchQuery.value = ''
+  selectedCategory.value = 'All'
+  confirmation.value = null
+  storeNotice.value = `“${product.name}” was updated.`
+  leaveOwnerDashboard()
+}
+
 function openOwnerDashboard() {
   if (!session.value.isAuthenticated) {
     openLogin()
@@ -192,6 +229,7 @@ function openOwnerDashboard() {
 
   if (!session.value.isOwner) return
 
+  editingProduct.value = null
   currentView.value = 'owner'
   accountMenuOpen.value = false
 }
@@ -291,6 +329,7 @@ function openOwnerDashboard() {
   </p>
   <main v-if="currentView === 'store'" class="container py-5">
     <h1>Product seller here</h1>
+    <p v-if="storeNotice" class="alert alert-success" role="status">{{ storeNotice }}</p>
     <div class="row g-3 mb-4">
       <div class="col-12 col-md-8">
         <label for="search" class="form-label">Search products</label>
@@ -353,6 +392,14 @@ function openOwnerDashboard() {
             @click="cart.addItem({ ...product, ...selections[product.id] })"
           >
             Add to Cart
+          </button>
+          <button
+            v-if="session.isOwner"
+            type="button"
+            class="btn btn-outline-secondary ms-2"
+            @click="editProduct(product)"
+          >
+            Edit
           </button>
         </ProductCard>
       </li>
@@ -428,11 +475,17 @@ function openOwnerDashboard() {
     <LoginForm @signed-in="signedIn" />
   </main>
   <main v-else-if="currentView === 'owner' && session.isOwner" class="container py-5">
-    <button type="button" class="btn btn-outline-secondary mb-3" @click="currentView = 'store'">
+    <button type="button" class="btn btn-outline-secondary mb-3" @click="leaveOwnerDashboard">
       ← Back to store
     </button>
     <h1>Owner Dashboard</h1>
     <p class="text-secondary">Create and manage your products.</p>
-    <OwnerProductBuilder @created="productCreated" />
+    <OwnerProductBuilder
+      :key="editingProduct?.id ?? 'new'"
+      :product="editingProduct"
+      @created="productCreated"
+      @updated="productUpdated"
+      @cancel="leaveOwnerDashboard"
+    />
   </main>
 </template>

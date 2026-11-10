@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import ProductCard from './ProductCard.vue'
 import { apiFetch } from '../services/api.js'
 
-const emit = defineEmits(['created'])
+const props = defineProps({ product: { type: Object, default: null } })
+const emit = defineEmits(['created', 'updated', 'cancel'])
+const isEditing = computed(() => props.product !== null)
 const draft = reactive({ name: '', description: '', category: '', price: '', details: [] })
 const saving = ref(false)
 const error = ref('')
@@ -17,7 +19,7 @@ const photoInput = ref(null)
 let uploadedImageUrl = ''
 
 function removePhoto() {
-  if (photoPreview.value) URL.revokeObjectURL(photoPreview.value)
+  if (photoPreview.value.startsWith('blob:')) URL.revokeObjectURL(photoPreview.value)
   photo.value = null
   photoPreview.value = ''
   photoAlt.value = ''
@@ -34,7 +36,7 @@ function selectPhoto(event) {
     file.size === 0 ||
     file.size > 5 * 1024 * 1024
   ) {
-    removePhoto()
+    if (photoInput.value) photoInput.value.value = ''
     photoError.value = 'Choose a JPEG, PNG, or WebP image up to 5 MB.'
     return
   }
@@ -44,7 +46,7 @@ function selectPhoto(event) {
 }
 
 onBeforeUnmount(() => {
-  if (photoPreview.value) URL.revokeObjectURL(photoPreview.value)
+  if (photoPreview.value.startsWith('blob:')) URL.revokeObjectURL(photoPreview.value)
 })
 
 const preview = computed(() => ({
@@ -58,7 +60,32 @@ function addDetail() {
   draft.details.push({ id: nextDetailId++, name: '', value: '' })
 }
 
-async function createProduct() {
+// Copy into a draft: typing and Cancel never modify the storefront object.
+watch(
+  () => props.product,
+  (product) => {
+    removePhoto()
+    error.value = ''
+    success.value = ''
+    Object.assign(draft, {
+      name: product?.name ?? '',
+      description: product?.description ?? '',
+      category: product?.category ?? '',
+      price: product?.price ?? '',
+      details: (product?.details ?? []).map(({ name, value }) => ({
+        id: nextDetailId++,
+        name,
+        value,
+      })),
+    })
+    photoPreview.value = product?.imageUrl ?? ''
+    uploadedImageUrl = product?.imageUrl ?? ''
+    photoAlt.value = product?.imageAlt ?? ''
+  },
+  { immediate: true },
+)
+
+async function saveProduct() {
   if (saving.value) return
   error.value = ''
   success.value = ''
@@ -85,7 +112,8 @@ async function createProduct() {
     return
   }
 
-  if (photo.value && !photoAlt.value.trim()) {
+  photoError.value = ''
+  if (photoPreview.value && !photoAlt.value.trim()) {
     photoError.value = 'Describe the photo for shoppers using screen readers.'
     return
   }
@@ -106,8 +134,9 @@ async function createProduct() {
       }
       uploadedImageUrl = image.imageUrl
     }
-    const response = await apiFetch('/api/products', {
-      method: 'POST',
+    const url = isEditing.value ? `/api/products/${props.product.id}` : '/api/products'
+    const response = await apiFetch(url, {
+      method: isEditing.value ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: draft.name.trim(),
@@ -119,9 +148,18 @@ async function createProduct() {
         imageAlt: photoAlt.value.trim(),
       }),
     })
+    if (response.status === 401 || response.status === 403) {
+      error.value =
+        'Owner access is required. Your draft is still here; sign in again before saving.'
+      return
+    }
     const result = await response.json()
     if (!response.ok) {
-      error.value = result.message ?? 'Could not create the product.'
+      error.value = result.message ?? 'Could not save the product.'
+      return
+    }
+    if (isEditing.value) {
+      emit('updated', result)
       return
     }
     removePhoto()
@@ -129,8 +167,7 @@ async function createProduct() {
     success.value = `“${result.name}” was created. Use Back to store to see it.`
     Object.assign(draft, { name: '', description: '', category: '', price: '', details: [] })
   } catch {
-    error.value =
-      'Could not confirm product creation. Check the API and storefront before retrying.'
+    error.value = 'Could not confirm the save. Check the API and storefront before retrying.'
   } finally {
     saving.value = false
   }
@@ -140,8 +177,10 @@ async function createProduct() {
 <template>
   <div class="row g-4 align-items-start">
     <section class="col-12 col-lg-7" aria-labelledby="builder-title">
-      <form class="card border-0 shadow-sm p-4" @submit.prevent="createProduct">
-        <h2 id="builder-title" class="h4 mb-4">Create a product</h2>
+      <form class="card border-0 shadow-sm p-4" @submit.prevent="saveProduct">
+        <h2 id="builder-title" class="h4 mb-4">
+          {{ isEditing ? 'Edit product' : 'Create a product' }}
+        </h2>
         <fieldset :disabled="saving">
           <div class="mb-4">
             <label for="product-photo" class="form-label">Main product photo (optional)</label>
@@ -276,7 +315,15 @@ async function createProduct() {
           </button>
           <div>
             <button type="submit" class="btn btn-dark">
-              {{ saving ? 'Creating…' : 'Create product' }}
+              {{ saving ? 'Saving…' : isEditing ? 'Save changes' : 'Create product' }}
+            </button>
+            <button
+              v-if="isEditing"
+              type="button"
+              class="btn btn-outline-secondary ms-2"
+              @click="emit('cancel')"
+            >
+              Cancel
             </button>
           </div>
         </fieldset>

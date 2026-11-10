@@ -372,6 +372,129 @@ app.MapPost("/api/products",
 })
 .WithName("CreateProduct").RequireAuthorization("OwnerOnly");
 
+// Update an existing product; its ID and purchase choices remain unchanged.
+app.MapPut("/api/products/{id:int}",
+    async (int id, CreateProductRequest request, StoreDbContext db) =>
+{
+    var product = await db.Products
+        .Include(product => product.Details)
+        .SingleOrDefaultAsync(product => product.Id == id);
+
+    if (product is null)
+        return Results.NotFound(new { message = "This product no longer exists." });
+
+    if (string.IsNullOrWhiteSpace(request.Name) ||
+        request.Name.Length > 120 ||
+        string.IsNullOrWhiteSpace(request.Category) ||
+        request.Category.Length > 80 ||
+        string.IsNullOrWhiteSpace(request.Description) ||
+        request.Description.Length > 2000)
+    {
+        return Results.BadRequest(new
+        {
+            message = "Provide a title (up to 120 characters), category (80), and description (2000)."
+        });
+    }
+
+    if (request.Price <= 0 ||
+        request.Price > 1000000 ||
+        decimal.Round(request.Price, 2) != request.Price)
+    {
+        return Results.BadRequest(new
+        {
+            message = "Price must be between $0.01 and $1,000,000 with no more than two decimal places."
+        });
+    }
+
+    var details = request.Details ?? [];
+
+    if (details.Length > 20 || details.Any(detail =>
+        detail is null ||
+        string.IsNullOrWhiteSpace(detail.Name) ||
+        string.IsNullOrWhiteSpace(detail.Value) ||
+        detail.Name.Length > 60 ||
+        detail.Value.Length > 200))
+    {
+        return Results.BadRequest(new
+        {
+            message = "Provide a name and value for each detail. Use at most 20 details, with names up to 60 and values up to 200 characters."
+        });
+    }
+
+    var cleanDetails = details.Select(detail =>
+        new ProductDetailEntity
+        {
+            Name = detail!.Name!.Trim(),
+            Value = detail.Value!.Trim()
+        }
+    ).ToList();
+
+    var uniqueNames = cleanDetails
+        .Select(detail => detail.Name)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    if (uniqueNames != cleanDetails.Count)
+    {
+        return Results.BadRequest(new
+        {
+            message = "Use a different name for each descriptive field."
+        });
+    }
+
+    string? imageUrl = null;
+    var imageAlt = request.ImageAlt?.Trim() ?? "";
+
+    if (!string.IsNullOrEmpty(request.ImageUrl))
+    {
+        const string prefix = "/api/product-images/";
+
+        var fileName = request.ImageUrl.StartsWith(
+            prefix,
+            StringComparison.Ordinal
+        )
+            ? request.ImageUrl[prefix.Length..]
+            : "";
+
+        if (!ProductImageFiles.IsSafeName(fileName) ||
+            !File.Exists(Path.Combine(imageDirectory, fileName)))
+        {
+            return Results.BadRequest(new
+            {
+                message = "Upload a valid product photo first."
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(imageAlt) || imageAlt.Length > 250)
+        {
+            return Results.BadRequest(new
+            {
+                message = "Provide an image description up to 250 characters."
+            });
+        }
+
+        imageUrl = request.ImageUrl;
+    }
+
+
+    product.Name = request.Name.Trim();
+    product.Description = request.Description.Trim();
+    product.Category = request.Category.Trim();
+    product.Price = request.Price;
+    product.ImageUrl = imageUrl;
+    product.ImageAlt = imageAlt;
+
+    db.RemoveRange(product.Details);
+    product.Details.Clear();
+    foreach (var detail in cleanDetails)
+        product.Details.Add(detail);
+
+    await db.SaveChangesAsync();
+    return Results.Ok(product);
+})
+.WithName("UpdateProduct")
+.RequireAuthorization("OwnerOnly");
+
 // Validate a demo cart and calculate its total using database prices.
 app.MapPost("/api/checkout",
     async (CheckoutRequest request, StoreDbContext db) =>
